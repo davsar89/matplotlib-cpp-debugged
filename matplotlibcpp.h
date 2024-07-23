@@ -243,6 +243,9 @@ namespace matplotlibcpp
                     throw std::runtime_error("Error loading module pylab!");
                 }
 
+                // PyRun_SimpleString("import matplotlib.pyplot as plt");
+                // PyRun_SimpleString("matplotlib.pyplot.rcParams['text.usetex'] = True");
+
                 s_python_function_arrow = safe_import(pymod, "arrow");
                 s_python_function_show = safe_import(pymod, "show");
                 s_python_function_close = safe_import(pymod, "close");
@@ -2223,7 +2226,7 @@ namespace matplotlibcpp
         Py_DECREF(res);
     }
 
-    void set_all_subplots_shared_x(PyObject *fig)
+    void set_all_subplots_locked_x(PyObject *fig)
     {
         if (!fig)
         {
@@ -2270,15 +2273,54 @@ namespace matplotlibcpp
         Py_DECREF(res);
     }
 
-    inline void legend(const std::map<std::string, std::string> &keywords)
+    inline bool is_double(const std::string &s)
+    {
+        std::istringstream iss(s);
+        double d;
+        return (iss >> d) && (iss.eof());
+    }
+
+    inline PyObject *legend(const std::map<std::string, std::string> &keywords)
+    {
+        detail::_interpreter::get();
+
+        // Construct keyword args
+        PyObject *kwargs = PyDict_New();
+        for (const auto &kv : keywords)
+        {
+            PyObject *value;
+            if (is_double(kv.second))
+            {
+                value = PyFloat_FromDouble(std::stod(kv.second));
+            }
+            else
+            {
+                value = PyUnicode_FromString(kv.second.c_str());
+            }
+            PyDict_SetItemString(kwargs, kv.first.c_str(), value);
+            Py_DECREF(value);
+        }
+
+        PyObject *res = PyObject_Call(detail::_interpreter::get().s_python_function_legend, detail::_interpreter::get().s_python_empty_tuple, kwargs);
+        if (!res)
+        {
+            Py_DECREF(kwargs);
+            throw std::runtime_error("Call to legend() failed.");
+        }
+
+        Py_DECREF(kwargs);
+        return res;
+    }
+
+    inline PyObject *legend(const std::map<std::string, double> &keywords)
     {
         detail::_interpreter::get();
 
         // construct keyword args
         PyObject *kwargs = PyDict_New();
-        for (std::map<std::string, std::string>::const_iterator it = keywords.begin(); it != keywords.end(); ++it)
+        for (std::map<std::string, double>::const_iterator it = keywords.begin(); it != keywords.end(); ++it)
         {
-            PyDict_SetItemString(kwargs, it->first.c_str(), PyString_FromString(it->second.c_str()));
+            PyDict_SetItemString(kwargs, it->first.c_str(), PyFloat_FromDouble(it->second));
         }
 
         PyObject *res = PyObject_Call(detail::_interpreter::get().s_python_function_legend, detail::_interpreter::get().s_python_empty_tuple, kwargs);
@@ -2286,7 +2328,53 @@ namespace matplotlibcpp
             throw std::runtime_error("Call to legend() failed.");
 
         Py_DECREF(kwargs);
-        Py_DECREF(res);
+
+        return res;
+    }
+
+    void deactivate_legend_transparency()
+    {
+        detail::_interpreter::get();
+
+        PyObject *ax = gca();
+
+        PyObject *legend = PyObject_CallMethod(ax, "get_legend", nullptr);
+
+        if (!legend)
+        {
+            throw std::runtime_error("Invalid legend object.");
+        }
+
+        // Set the legend frame's alpha to 1 (fully opaque)
+        PyObject *frame = PyObject_CallMethod(legend, "get_frame", nullptr);
+        if (frame)
+        {
+            PyObject_CallMethod(frame, "set_alpha", "f", 1.0);
+            Py_DECREF(frame);
+        }
+        else
+        {
+            PyErr_Print(); // Print the error to get more information about what went wrong
+            throw std::runtime_error("Call to get_frame() failed.");
+        }
+
+        // Set the alpha for all legend handles to 1 (fully opaque)
+        PyObject *handles = PyObject_CallMethod(legend, "legendHandles", nullptr);
+        if (handles)
+        {
+            Py_ssize_t num_handles = PyList_Size(handles);
+            for (Py_ssize_t i = 0; i < num_handles; ++i)
+            {
+                PyObject *handle = PyList_GetItem(handles, i); // Borrowed reference
+                PyObject_CallMethod(handle, "set_alpha", "f", 1.0);
+            }
+            Py_DECREF(handles);
+        }
+        else
+        {
+            PyErr_Print(); // Print the error to get more information about what went wrong
+            throw std::runtime_error("Call to legendHandles() failed.");
+        }
     }
 
     PyObject *get_first_line(PyObject *ax)
